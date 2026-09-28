@@ -92,6 +92,7 @@ class TaskStore extends ChangeNotifier {
       }
     }
     await refresh(notify: false);
+    await _syncWeekEndAlert();
   }
 
   Future<void> _save() async {
@@ -102,6 +103,7 @@ class TaskStore extends ChangeNotifier {
       'history': history.map((e) => e.toJson()).toList(),
     };
     await _prefs?.setString(_key, jsonEncode(data));
+    await _syncWeekEndAlert();
   }
 
   /// Handles week rollover: promotes the queued task if the last one was
@@ -151,6 +153,35 @@ class TaskStore extends ChangeNotifier {
     if (title != null && body != null) {
       await AppNotifier.show(title, body);
     }
+  }
+
+  /// Android: schedules one notification for Sunday 09:00 (start of next
+  /// week). Its text depends on the current state, so this runs after every
+  /// save and the pending notification always matches what the app would do.
+  Future<void> _syncWeekEndAlert() async {
+    final w = WeekInfo.now();
+    final when = DateTime(w.end.year, w.end.month, w.end.day + 1, 9);
+    final upcoming = WeekInfo.of(when).number;
+    final c = current;
+
+    String title;
+    String body;
+    if (c == null) {
+      title = 'Week $upcoming started';
+      body = 'No task yet. Open Weekly Task and set one.';
+    } else if (c.done) {
+      if (next != null) {
+        title = 'Week $upcoming started';
+        body = 'This week: $next';
+      } else {
+        title = 'Week ${w.number} finished';
+        body = 'Nice work. Set your task for week $upcoming.';
+      }
+    } else {
+      title = 'Week ended - task not finished';
+      body = '"${c.text}": keep it, replace it, or drop it?';
+    }
+    await AppNotifier.scheduleWeekEnd(when: when, title: title, body: body);
   }
 
   void _log(Task t, String outcome) {
