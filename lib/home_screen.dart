@@ -21,6 +21,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final _taskCtrl = TextEditingController();
   final _nextCtrl = TextEditingController();
+  final _subtaskCtrl = TextEditingController();
   Timer? _timer;
   bool _replacing = false;
 
@@ -44,6 +45,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _timer?.cancel();
     _taskCtrl.dispose();
     _nextCtrl.dispose();
+    _subtaskCtrl.dispose();
     super.dispose();
   }
 
@@ -77,6 +79,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     store.replaceTask(t);
     _taskCtrl.clear();
     setState(() => _replacing = false);
+  }
+
+  void _addSubtask() {
+    final text = _subtaskCtrl.text.trim();
+    if (text.isEmpty) return;
+    store.addSubtask(text);
+    _subtaskCtrl.clear();
   }
 
   // ---- ui helpers ----
@@ -221,6 +230,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _tile(context, "This week's task", c.text),
+        _subtaskList(context, c),
         _wide(FilledButton.icon(
           onPressed: store.complete,
           icon: const Icon(Icons.check),
@@ -240,6 +250,63 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               onPressed: _setNext, child: const Text('Queue it'))),
         ],
       ],
+    );
+  }
+
+  Widget _subtaskList(BuildContext context, Task task) {
+    final week = WeekInfo.now();
+    return Card(
+      margin: const EdgeInsets.only(top: 16),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Checklist', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            if (task.subtasks.isEmpty)
+              const Text('Add small steps under this week\'s goal.'),
+            for (final subtask in task.subtasks)
+              Row(
+                children: [
+                  Expanded(child: Text(subtask.text)),
+                  for (var offset = 0; offset < 7; offset++)
+                    Tooltip(
+                      message: formatShort(week.start.add(Duration(days: offset))),
+                      child: Checkbox(
+                        value: subtask.isDoneOn(
+                            week.start.add(Duration(days: offset))),
+                        visualDensity: VisualDensity.compact,
+                        onChanged: (_) => store.toggleSubtask(
+                          subtask.id,
+                          week.start.add(Duration(days: offset)),
+                        ),
+                      ),
+                    ),
+                  IconButton(
+                    tooltip: 'Remove subtask',
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: () => store.removeSubtask(subtask.id),
+                  ),
+                ],
+              ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _subtaskCtrl,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'Add a subtask',
+              ),
+              onSubmitted: (_) => _addSubtask(),
+            ),
+            _wide(OutlinedButton.icon(
+              onPressed: _addSubtask,
+              icon: const Icon(Icons.add),
+              label: const Text('Add subtask'),
+            )),
+          ],
+        ),
+      ),
     );
   }
 

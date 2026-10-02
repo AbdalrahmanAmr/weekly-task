@@ -14,6 +14,9 @@ String formatLong(DateTime d) =>
 String formatShort(DateTime d) =>
     '${_months[d.month - 1].substring(0, 3)} ${d.day}, ${d.year}';
 
+String dateKey(DateTime d) =>
+  '${d.year}-${_two(d.month)}-${_two(d.day)}';
+
 /// ISO 8601 week number of [date].
 int _isoWeek(DateTime date) {
   final d = DateTime.utc(date.year, date.month, date.day);

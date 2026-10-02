@@ -60,6 +60,15 @@ class StudyTimerConfig {
   final StudyModeSettings deepWork;
   final StudyModeSettings custom;
 
+  StudyTimerConfig copyWith({StudyModeSettings? custom}) {
+    return StudyTimerConfig(
+      pomodoro: pomodoro,
+      shortFocus: shortFocus,
+      deepWork: deepWork,
+      custom: custom ?? this.custom,
+    );
+  }
+
   StudyModeSettings forMode(StudyMode mode) {
     switch (mode) {
       case StudyMode.pomodoro:
@@ -146,6 +155,8 @@ class ActiveStudyTimer {
   }
 
   ActiveStudyTimer copyWith({
+    String? id,
+    DateTime? startedAt,
     StudyPhase? phase,
     StudyTimerStatus? status,
     DateTime? phaseStartedAt,
@@ -156,11 +167,11 @@ class ActiveStudyTimer {
     int? pausedSeconds,
   }) {
     return ActiveStudyTimer(
-      id: id,
+      id: id ?? this.id,
       mode: mode,
       phase: phase ?? this.phase,
       status: status ?? this.status,
-      startedAt: startedAt,
+      startedAt: startedAt ?? this.startedAt,
       phaseStartedAt: phaseStartedAt ?? this.phaseStartedAt,
       plannedSeconds: plannedSeconds ?? this.plannedSeconds,
       weekKey: weekKey,

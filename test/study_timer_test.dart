@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:weekly_task/planner_stats.dart';
 import 'package:weekly_task/study_timer.dart';
+import 'package:weekly_task/task_store.dart';
 
 void main() {
   test('running timer calculates remaining time from timestamps', () {
@@ -61,5 +63,50 @@ void main() {
     expect(timer.phase, StudyPhase.focus);
     expect(timer.plannedSeconds, 25 * 60);
     expect(timer.weekKey, isNotEmpty);
+  });
+
+  test('custom settings are bounded and persist through configuration', () {
+    final config = const StudyTimerConfig().copyWith(
+      custom: const StudyModeSettings(focusSeconds: 1200, breakSeconds: 180),
+    );
+
+    expect(config.custom.focusSeconds, 1200);
+    expect(config.custom.breakSeconds, 180);
+  });
+
+  test('subtask completion days round trip as local date keys', () {
+    final subtask = Subtask(
+      id: 'subtask-1',
+      text: 'Read chapter',
+      completedDays: {'2026-10-02'},
+    );
+    final restored = Subtask.fromJson(subtask.toJson());
+
+    expect(restored.text, 'Read chapter');
+    expect(restored.completedDays, contains('2026-10-02'));
+  });
+
+  test('weekly stats calculate distinct completed streaks', () {
+    final history = [
+      HistoryEntry(
+        text: 'One',
+        weekNumber: 39,
+        outcome: 'done',
+        at: DateTime(2026, 9, 26),
+        weekKey: '2026-09-20',
+      ),
+      HistoryEntry(
+        text: 'Two',
+        weekNumber: 40,
+        outcome: 'done',
+        at: DateTime(2026, 10, 3),
+        weekKey: '2026-09-27',
+      ),
+    ];
+    final stats = PlannerStats.fromHistory(history);
+
+    expect(stats.completedWeeks, 2);
+    expect(stats.longestStreak, 2);
+    expect(stats.completionRate, 1);
   });
 }

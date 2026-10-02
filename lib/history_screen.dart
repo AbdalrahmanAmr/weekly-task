@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'calendar_screen.dart';
+import 'planner_stats.dart';
 import 'study_timer.dart';
 import 'task_store.dart';
 import 'week_utils.dart';
@@ -16,6 +18,17 @@ class HistoryScreen extends StatelessWidget {
       child: Scaffold(
         appBar: AppBar(
           title: const Text('History'),
+          actions: [
+            IconButton(
+              tooltip: 'Calendar',
+              icon: const Icon(Icons.calendar_month),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => CalendarScreen(store: store),
+                ),
+              ),
+            ),
+          ],
           bottom: const TabBar(
             tabs: [
               Tab(text: 'Weeks'),
@@ -165,6 +178,7 @@ class _TimerStats extends StatelessWidget {
       0,
       (total, session) => total + session.actualSeconds,
     );
+    final planner = PlannerStats.fromHistory(screen.store.history);
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -176,6 +190,16 @@ class _TimerStats extends StatelessWidget {
           context,
           'Average session',
           count == 0 ? '0 minutes' : '${totalSeconds ~/ count ~/ 60} minutes',
+        ),
+        const SizedBox(height: 12),
+        _stat(context, 'Current weekly streak', '${planner.currentStreak} weeks'),
+        const SizedBox(height: 12),
+        _stat(context, 'Longest weekly streak', '${planner.longestStreak} weeks'),
+        const SizedBox(height: 12),
+        _stat(
+          context,
+          'Weekly completion rate',
+          '${(planner.completionRate * 100).round()}%',
         ),
       ],
     );

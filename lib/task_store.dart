@@ -7,24 +7,61 @@ import 'notifier.dart';
 import 'study_timer.dart';
 import 'week_utils.dart';
 
+class Subtask {
+  Subtask({
+    required this.id,
+    required this.text,
+    Set<String>? completedDays,
+  }) : completedDays = completedDays ?? <String>{};
+
+  final String id;
+  String text;
+  final Set<String> completedDays;
+
+  bool isDoneOn(DateTime day) => completedDays.contains(dateKey(day));
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'text': text,
+        'completedDays': completedDays.toList()..sort(),
+      };
+
+  factory Subtask.fromJson(Map<String, dynamic> json) => Subtask(
+        id: json['id'] as String? ?? '${DateTime.now().microsecondsSinceEpoch}',
+        text: json['text'] as String? ?? '',
+        completedDays: (json['completedDays'] as List? ?? [])
+            .whereType<String>()
+            .toSet(),
+      );
+
+  Subtask copy() => Subtask(
+        id: id,
+        text: text,
+        completedDays: {...completedDays},
+      );
+}
+
 class Task {
   Task({
     required this.text,
     required this.weekKey,
     required this.weekNumber,
     this.done = false,
-  });
+    List<Subtask>? subtasks,
+  }) : subtasks = subtasks ?? [];
 
   String text;
   String weekKey;
   int weekNumber;
   bool done;
+  final List<Subtask> subtasks;
 
   Map<String, dynamic> toJson() => {
         'text': text,
         'weekKey': weekKey,
         'weekNumber': weekNumber,
         'done': done,
+        'subtasks': subtasks.map((e) => e.toJson()).toList(),
       };
 
   factory Task.fromJson(Map<String, dynamic> j) => Task(
@@ -32,6 +69,10 @@ class Task {
         weekKey: j['weekKey'] as String,
         weekNumber: j['weekNumber'] as int,
         done: (j['done'] as bool?) ?? false,
+        subtasks: (j['subtasks'] as List? ?? [])
+          .whereType<Map<String, dynamic>>()
+          .map(Subtask.fromJson)
+          .toList(),
       );
 }
 
@@ -42,18 +83,24 @@ class HistoryEntry {
     required this.weekNumber,
     required this.outcome,
     required this.at,
-  });
+    this.weekKey,
+    List<Subtask>? subtasks,
+  }) : subtasks = subtasks ?? [];
 
   final String text;
   final int weekNumber;
   final String outcome;
   final DateTime at;
+  final String? weekKey;
+  final List<Subtask> subtasks;
 
   Map<String, dynamic> toJson() => {
         'text': text,
         'weekNumber': weekNumber,
         'outcome': outcome,
         'at': at.toIso8601String(),
+        'weekKey': weekKey,
+        'subtasks': subtasks.map((e) => e.toJson()).toList(),
       };
 
   factory HistoryEntry.fromJson(Map<String, dynamic> j) => HistoryEntry(
@@ -61,6 +108,11 @@ class HistoryEntry {
         weekNumber: j['weekNumber'] as int,
         outcome: j['outcome'] as String,
         at: DateTime.parse(j['at'] as String),
+        weekKey: j['weekKey'] as String?,
+        subtasks: (j['subtasks'] as List? ?? [])
+          .whereType<Map<String, dynamic>>()
+          .map(Subtask.fromJson)
+          .toList(),
       );
 }
 
@@ -75,6 +127,7 @@ class TaskStore extends ChangeNotifier {
   final List<StudySession> studySessions = [];
   StudyTimerConfig studyTimerConfig = const StudyTimerConfig();
   SharedPreferences? _prefs;
+  bool _reconcilingStudyTimer = false;
 
   Future<void> load() async {
     _prefs = await SharedPreferences.getInstance();
@@ -201,7 +254,10 @@ class TaskStore extends ChangeNotifier {
   /// save and the pending notification always matches what the app would do.
   Future<void> _syncWeekEndAlert() async {
     final w = WeekInfo.now();
-    final when = DateTime(w.end.year, w.end.month, w.end.day + 1, 9);
+    var when = DateTime(w.end.year, w.end.month, w.end.day + 1, 9);
+    if (!when.isAfter(DateTime.now())) {
+      when = when.add(const Duration(days: 7));
+    }
     final upcoming = WeekInfo.of(when).number;
     final c = current;
 
@@ -231,6 +287,8 @@ class TaskStore extends ChangeNotifier {
       weekNumber: t.weekNumber,
       outcome: outcome,
       at: DateTime.now(),
+      weekKey: t.weekKey,
+      subtasks: t.subtasks.map((subtask) => subtask.copy()).toList(),
     ));
   }
 
@@ -285,6 +343,47 @@ class TaskStore extends ChangeNotifier {
     await _commit();
   }
 
+  Future<void> addSubtask(String text) async {
+    final task = current;
+    final value = text.trim();
+    if (task == null || value.isEmpty) return;
+    task.subtasks.add(Subtask(
+      id: '${DateTime.now().microsecondsSinceEpoch}',
+      text: value,
+    ));
+    await _commit();
+  }
+
+  Future<void> renameSubtask(String id, String text) async {
+    final task = current;
+    final value = text.trim();
+    final subtask = task?.subtasks.firstWhere(
+      (item) => item.id == id,
+      orElse: () => Subtask(id: '', text: ''),
+    );
+    if (task == null || subtask == null || subtask.id.isEmpty || value.isEmpty) {
+      return;
+    }
+    subtask.text = value;
+    await _commit();
+  }
+
+  Future<void> removeSubtask(String id) async {
+    final task = current;
+    if (task == null) return;
+    task.subtasks.removeWhere((item) => item.id == id);
+    await _commit();
+  }
+
+  Future<void> toggleSubtask(String id, DateTime day) async {
+    final task = current;
+    final subtask = task?.subtasks.where((item) => item.id == id).firstOrNull;
+    if (subtask == null) return;
+    final key = dateKey(day);
+    if (!subtask.completedDays.add(key)) subtask.completedDays.remove(key);
+    await _commit();
+  }
+
   Future<void> startStudySession(StudyMode mode) async {
     if (activeStudyTimer != null) return;
     final now = DateTime.now();
@@ -299,6 +398,19 @@ class TaskStore extends ChangeNotifier {
       plannedSeconds: settings.focusSeconds,
       weekKey: WeekInfo.now().key,
       taskText: current?.text,
+    );
+    await _commit();
+  }
+
+  Future<void> setCustomStudySettings({
+    required int focusMinutes,
+    required int breakMinutes,
+  }) async {
+    studyTimerConfig = studyTimerConfig.copyWith(
+      custom: StudyModeSettings(
+        focusSeconds: focusMinutes * 60,
+        breakSeconds: breakMinutes * 60,
+      ),
     );
     await _commit();
   }
@@ -327,7 +439,28 @@ class TaskStore extends ChangeNotifier {
   }
 
   Future<void> resetStudySession() async {
-    if (activeStudyTimer == null) return;
+    final active = activeStudyTimer;
+    if (active == null) return;
+    final now = DateTime.now();
+    final elapsed = now.difference(active.phaseStartedAt).inSeconds -
+        active.pausedSeconds;
+    if (active.isFocus && elapsed > 0) {
+      studySessions.removeWhere((session) => session.id == active.id);
+      studySessions.insert(
+        0,
+        StudySession(
+          id: active.id,
+          mode: active.mode,
+          startedAt: active.startedAt,
+          endedAt: now,
+          plannedSeconds: active.plannedSeconds,
+          actualSeconds: elapsed.clamp(0, active.plannedSeconds),
+          completed: false,
+          weekKey: active.weekKey,
+          taskText: active.taskText,
+        ),
+      );
+    }
     activeStudyTimer = null;
     await _commit();
   }
@@ -365,6 +498,16 @@ class TaskStore extends ChangeNotifier {
   }
 
   Future<void> reconcileStudyTimer({bool notify = true}) async {
+    if (_reconcilingStudyTimer) return;
+    _reconcilingStudyTimer = true;
+    try {
+      await _reconcileStudyTimer(notify: notify);
+    } finally {
+      _reconcilingStudyTimer = false;
+    }
+  }
+
+  Future<void> _reconcileStudyTimer({bool notify = true}) async {
     final active = activeStudyTimer;
     if (active == null ||
         active.status != StudyTimerStatus.running ||
@@ -373,7 +516,8 @@ class TaskStore extends ChangeNotifier {
     }
     if (active.isFocus) {
       final now = DateTime.now();
-      final actual = now.difference(active.phaseStartedAt).inSeconds;
+        final actual = now.difference(active.phaseStartedAt).inSeconds -
+          active.pausedSeconds;
       studySessions.removeWhere((session) => session.id == active.id);
       studySessions.insert(
         0,
@@ -411,6 +555,8 @@ class TaskStore extends ChangeNotifier {
   ActiveStudyTimer _nextFocus(ActiveStudyTimer active) {
     final now = DateTime.now();
     return active.copyWith(
+      id: '${now.microsecondsSinceEpoch}',
+      startedAt: now,
       phase: StudyPhase.focus,
       status: StudyTimerStatus.running,
       phaseStartedAt: now,

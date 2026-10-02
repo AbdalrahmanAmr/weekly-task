@@ -17,12 +17,19 @@ class StudyTimerScreen extends StatefulWidget {
 class _StudyTimerScreenState extends State<StudyTimerScreen> {
   Timer? _ticker;
   StudyMode _mode = StudyMode.pomodoro;
+  late final TextEditingController _customFocus;
+  late final TextEditingController _customBreak;
 
   TaskStore get store => widget.store;
 
   @override
   void initState() {
     super.initState();
+    final custom = widget.store.studyTimerConfig.custom;
+    _customFocus = TextEditingController(
+      text: '${custom.focusSeconds ~/ 60}');
+    _customBreak = TextEditingController(
+      text: '${custom.breakSeconds ~/ 60}');
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) async {
       await store.reconcileStudyTimer();
       if (mounted) setState(() {});
@@ -32,6 +39,8 @@ class _StudyTimerScreenState extends State<StudyTimerScreen> {
   @override
   void dispose() {
     _ticker?.cancel();
+    _customFocus.dispose();
+    _customBreak.dispose();
     super.dispose();
   }
 
@@ -67,7 +76,38 @@ class _StudyTimerScreenState extends State<StudyTimerScreen> {
   }
 
   Future<void> _start() async {
+    if (_mode == StudyMode.custom) {
+      final focus = int.tryParse(_customFocus.text) ?? 30;
+      final breakMinutes = int.tryParse(_customBreak.text) ?? 5;
+      await store.setCustomStudySettings(
+        focusMinutes: focus.clamp(1, 240),
+        breakMinutes: breakMinutes.clamp(0, 60),
+      );
+    }
     await store.startStudySession(_mode);
+  }
+
+  Widget _customFields() {
+    if (_mode != StudyMode.custom) return const SizedBox.shrink();
+    return Row(
+      children: [
+        Expanded(
+          child: TextField(
+            controller: _customFocus,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'Focus minutes'),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: TextField(
+            controller: _customBreak,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'Break minutes'),
+          ),
+        ),
+      ],
+    );
   }
 
   Future<void> _reset() async {
@@ -159,6 +199,8 @@ class _StudyTimerScreenState extends State<StudyTimerScreen> {
                     const Text('Start a session with or without a weekly task.'),
                     const SizedBox(height: 24),
                     _modePicker(),
+                    const SizedBox(height: 12),
+                    _customFields(),
                     const SizedBox(height: 24),
                     FilledButton.icon(
                       onPressed: _start,
