@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'history_screen.dart';
+import 'study_timer.dart';
+import 'study_timer_screen.dart';
 import 'task_store.dart';
 import 'week_utils.dart';
 
@@ -273,12 +275,44 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return _activeView(context, c);
   }
 
+  Widget _timerTile(BuildContext context) {
+    final active = store.activeStudyTimer;
+    if (active == null) {
+      return OutlinedButton.icon(
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => StudyTimerScreen(store: store)),
+        ),
+        icon: const Icon(Icons.timer_outlined),
+        label: const Text('Start a study session'),
+      );
+    }
+    final phase = active.phase == StudyPhase.focus ? 'Focus' : 'Break';
+    return Card(
+      child: ListTile(
+        leading: const Icon(Icons.timer),
+        title: Text('$phase session active'),
+        subtitle: Text(active.taskText ?? 'General study session'),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => StudyTimerScreen(store: store)),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Weekly Task'),
         actions: [
+          IconButton(
+            tooltip: 'Study timer',
+            icon: const Icon(Icons.timer_outlined),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => StudyTimerScreen(store: store)),
+            ),
+          ),
           IconButton(
             tooltip: 'History',
             icon: const Icon(Icons.history),
@@ -299,6 +333,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 padding: const EdgeInsets.all(20),
                 children: [
                   _weekCard(context, w),
+                  const SizedBox(height: 16),
+                  _timerTile(context),
                   const SizedBox(height: 16),
                   _body(context, w),
                 ],

@@ -14,6 +14,7 @@ class AppNotifier {
   static final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   static const int _weekEndId = 1;
+  static const int _studyTimerId = 2;
 
   static Future<void> init() async {
     if (Platform.isWindows) {
@@ -73,6 +74,46 @@ class AppNotifier {
             'weekly_task_channel',
             'Weekly Task',
             channelDescription: 'Reminders when a new week starts',
+            importance: Importance.high,
+            priority: Priority.high,
+          ),
+        ),
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      );
+    } catch (_) {}
+  }
+
+  static Future<void> cancelStudyTimer() async {
+    if (!_androidReady) return;
+    try {
+      await _plugin.cancel(id: _studyTimerId);
+    } catch (_) {}
+  }
+
+  static Future<void> scheduleStudyTimer({
+    required DateTime when,
+    required String title,
+    required String body,
+  }) async {
+    if (Platform.isWindows) {
+      if (when.isAfter(DateTime.now())) return;
+      await show(title, body);
+      return;
+    }
+    if (!_androidReady) return;
+    try {
+      await _plugin.cancel(id: _studyTimerId);
+      if (!when.isAfter(DateTime.now())) return;
+      await _plugin.zonedSchedule(
+        id: _studyTimerId,
+        title: title,
+        body: body,
+        scheduledDate: tz.TZDateTime.from(when, tz.UTC),
+        notificationDetails: const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'weekly_task_study_timer',
+            'Study timer',
+            channelDescription: 'Notifications when a study phase ends',
             importance: Importance.high,
             priority: Priority.high,
           ),

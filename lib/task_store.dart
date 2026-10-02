@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'notifier.dart';
+import 'study_timer.dart';
 import 'week_utils.dart';
 
 class Task {
@@ -70,6 +71,9 @@ class TaskStore extends ChangeNotifier {
   String? next;
   String? lastSeenWeek;
   final List<HistoryEntry> history = [];
+  ActiveStudyTimer? activeStudyTimer;
+  final List<StudySession> studySessions = [];
+  StudyTimerConfig studyTimerConfig = const StudyTimerConfig();
   SharedPreferences? _prefs;
 
   Future<void> load() async {
@@ -87,6 +91,19 @@ class TaskStore extends ChangeNotifier {
           ..clear()
           ..addAll((j['history'] as List? ?? [])
               .map((e) => HistoryEntry.fromJson(e as Map<String, dynamic>)));
+        final active = j['activeStudyTimer'];
+        activeStudyTimer = active is Map<String, dynamic>
+            ? ActiveStudyTimer.fromJson(active)
+            : null;
+        studySessions
+          ..clear()
+          ..addAll((j['studySessions'] as List? ?? [])
+              .whereType<Map<String, dynamic>>()
+              .map(StudySession.fromJson));
+        final config = j['studySettings'];
+        if (config is Map<String, dynamic>) {
+          studyTimerConfig = StudyTimerConfig.fromJson(config);
+        }
       } catch (_) {
         // corrupted data: start fresh
       }
@@ -101,9 +118,32 @@ class TaskStore extends ChangeNotifier {
       'next': next,
       'lastSeenWeek': lastSeenWeek,
       'history': history.map((e) => e.toJson()).toList(),
+      'activeStudyTimer': activeStudyTimer?.toJson(),
+      'studySessions': studySessions.take(500).map((e) => e.toJson()).toList(),
+      'studySettings': studyTimerConfig.toJson(),
     };
     await _prefs?.setString(_key, jsonEncode(data));
     await _syncWeekEndAlert();
+    await _syncStudyTimerAlert();
+  }
+
+  Future<void> _syncStudyTimerAlert() async {
+    final active = activeStudyTimer;
+    if (active == null || active.status != StudyTimerStatus.running) {
+      await AppNotifier.cancelStudyTimer();
+      return;
+    }
+    final when = active.phaseStartedAt.add(
+      Duration(seconds: active.plannedSeconds + active.pausedSeconds),
+    );
+    final label = active.phase == StudyPhase.focus ? 'Focus' : 'Break';
+    await AppNotifier.scheduleStudyTimer(
+      when: when,
+      title: '$label phase complete',
+      body: active.phase == StudyPhase.focus
+          ? 'Your focus session is complete.'
+          : 'Your break is complete.',
+    );
   }
 
   /// Handles week rollover: promotes the queued task if the last one was
@@ -150,6 +190,7 @@ class TaskStore extends ChangeNotifier {
       await _save();
       notifyListeners();
     }
+    await reconcileStudyTimer(notify: false);
     if (title != null && body != null) {
       await AppNotifier.show(title, body);
     }
@@ -242,5 +283,140 @@ class TaskStore extends ChangeNotifier {
   Future<void> clearNext() async {
     next = null;
     await _commit();
+  }
+
+  Future<void> startStudySession(StudyMode mode) async {
+    if (activeStudyTimer != null) return;
+    final now = DateTime.now();
+    final settings = studyTimerConfig.forMode(mode);
+    activeStudyTimer = ActiveStudyTimer(
+      id: '${now.microsecondsSinceEpoch}',
+      mode: mode,
+      phase: StudyPhase.focus,
+      status: StudyTimerStatus.running,
+      startedAt: now,
+      phaseStartedAt: now,
+      plannedSeconds: settings.focusSeconds,
+      weekKey: WeekInfo.now().key,
+      taskText: current?.text,
+    );
+    await _commit();
+  }
+
+  Future<void> pauseStudySession() async {
+    final active = activeStudyTimer;
+    if (active == null || active.status != StudyTimerStatus.running) return;
+    activeStudyTimer = active.copyWith(
+      status: StudyTimerStatus.paused,
+      pausedAt: DateTime.now(),
+    );
+    await _commit();
+  }
+
+  Future<void> resumeStudySession() async {
+    final active = activeStudyTimer;
+    if (active == null || active.status != StudyTimerStatus.paused) return;
+    final now = DateTime.now();
+    final pausedAt = active.pausedAt ?? now;
+    activeStudyTimer = active.copyWith(
+      status: StudyTimerStatus.running,
+      pausedSeconds: active.pausedSeconds + now.difference(pausedAt).inSeconds,
+      clearPausedAt: true,
+    );
+    await _commit();
+  }
+
+  Future<void> resetStudySession() async {
+    if (activeStudyTimer == null) return;
+    activeStudyTimer = null;
+    await _commit();
+  }
+
+  Future<void> skipStudyBreak() async {
+    final active = activeStudyTimer;
+    if (active == null ||
+        (active.status != StudyTimerStatus.waitingForBreak &&
+            active.status != StudyTimerStatus.waitingForFocus)) {
+      return;
+    }
+    activeStudyTimer = active.status == StudyTimerStatus.waitingForFocus
+        ? null
+        : _nextFocus(active);
+    await _commit();
+  }
+
+  Future<void> startStudyBreak() async {
+    final active = activeStudyTimer;
+    if (active == null || active.status != StudyTimerStatus.waitingForBreak) {
+      return;
+    }
+    final settings = studyTimerConfig.forMode(active.mode);
+    final longBreak = active.completedFocusCount % 4 == 0;
+    activeStudyTimer = active.copyWith(
+      phase: longBreak ? StudyPhase.longBreak : StudyPhase.shortBreak,
+      status: StudyTimerStatus.running,
+      phaseStartedAt: DateTime.now(),
+      plannedSeconds:
+          longBreak ? settings.longBreakSeconds : settings.breakSeconds,
+      clearPausedAt: true,
+      pausedSeconds: 0,
+    );
+    await _commit();
+  }
+
+  Future<void> reconcileStudyTimer({bool notify = true}) async {
+    final active = activeStudyTimer;
+    if (active == null ||
+        active.status != StudyTimerStatus.running ||
+        !active.isExpiredAt(DateTime.now())) {
+      return;
+    }
+    if (active.isFocus) {
+      final now = DateTime.now();
+      final actual = now.difference(active.phaseStartedAt).inSeconds;
+      studySessions.removeWhere((session) => session.id == active.id);
+      studySessions.insert(
+        0,
+        StudySession(
+          id: active.id,
+          mode: active.mode,
+          startedAt: active.startedAt,
+          endedAt: now,
+          plannedSeconds: active.plannedSeconds,
+          actualSeconds: actual.clamp(0, active.plannedSeconds),
+          completed: true,
+          weekKey: active.weekKey,
+          taskText: active.taskText,
+        ),
+      );
+      activeStudyTimer = active.copyWith(
+        status: StudyTimerStatus.waitingForBreak,
+        completedFocusCount: active.completedFocusCount + 1,
+        clearPausedAt: true,
+        pausedSeconds: 0,
+      );
+    } else {
+      activeStudyTimer = _nextFocus(active);
+    }
+    await AppNotifier.show(
+      '${active.phase == StudyPhase.focus ? 'Focus' : 'Break'} phase complete',
+      active.phase == StudyPhase.focus
+          ? 'Your focus session is complete.'
+          : 'Your break is complete.',
+    );
+    await _save();
+    if (notify) notifyListeners();
+  }
+
+  ActiveStudyTimer _nextFocus(ActiveStudyTimer active) {
+    final now = DateTime.now();
+    return active.copyWith(
+      phase: StudyPhase.focus,
+      status: StudyTimerStatus.running,
+      phaseStartedAt: now,
+      plannedSeconds: studyTimerConfig.forMode(active.mode).focusSeconds,
+      clearPausedAt: true,
+      pausedSeconds: 0,
+    );
   }
 }
